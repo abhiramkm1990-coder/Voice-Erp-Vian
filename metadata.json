@@ -1,0 +1,6 @@
+{
+  "name": "VianERP & CRM",
+  "description": "Modern Enterprise Resource Planning and CRM Platform featuring Role-Based Access Control, AI Multilingual Voice Assistant (WAI), and Supabase readiness.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
