@@ -1,12 +1,93 @@
 import express from 'express';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// A. STT Endpoint (OpenAI Whisper)
+app.post('/api/stt', express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const { audioBase64, lang = 'ml' } = req.body;
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const binary = Buffer.from(audioBase64.split(',')[1] || audioBase64, 'base64');
+    const file = new File([binary], 'input.webm', { type: 'audio/webm' });
+
+    const transcription = await client.audio.transcriptions.create({
+      file,
+      model: 'whisper-1',
+      language: lang === 'ml' ? 'ml' : 'en',
+      response_format: 'text',
+    });
+    console.log('[STT backend] Whisper response type=', typeof transcription, 'value=', transcription);
+
+    res.json({ transcript: typeof transcription === 'string' ? transcription : (transcription?.text || transcription) });
+  } catch (error) {
+    console.error('STT Error:', error);
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// B. TTS Endpoint (ElevenLabs — eleven_multilingual_v2)
+app.post('/api/tts', express.json(), async (req, res) => {
+  try {
+    const { text, lang = 'ml' } = req.body;
+    const voiceId = 'ThT5KcBeKPv3lak3zX9l';
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: 'ELEVENLABS_API_KEY not configured' });
+    }
+
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0,
+          use_speaker_boost: true,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('ElevenLabs API Error:', errText);
+      return res.status(500).json({ error: 'TTS conversion failed' });
+    }
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    const reader = response.body?.getReader();
+    if (!reader) {
+      return res.status(500).json({ error: 'No audio stream from ElevenLabs' });
+    }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+      res.end();
+    }
+  } catch (error) {
+    console.error('TTS Error:', error);
+    res.status(500).json({ error: String(error) });
+  }
+});
 
 // API Route: Vian Voice AI Multilingual Query Endpoint
 app.post('/api/wai', async (req, res) => {
@@ -54,8 +135,15 @@ app.post('/api/wai', async (req, res) => {
         tickets: enterpriseContext?.tickets || [],
       };
 
-      const systemPrompt = `You are "Vian Voice AI" (Vianinfo Enterprise AI Voice & Text Assistant), the official AI intelligence assistant for Vianinfo Solutions.
-Target Language for response: ${language === 'ml' ? 'Malayalam (മലയാളം)' : language === 'hi' ? 'Hindi (हिंदी)' : 'English'}.
+      const systemPrompt = `You are "Vian Voice AI", a warm, clear, and intelligent voice assistant for VianERP.
+
+PERSONA: Friendly, polite, and conversational. Speak modern Malayalam (മലയാളം) naturally blended with common office English terms: Present, Break, Leave, Pending, Reports, CRM, Tickets.
+
+FORMAT RULES:
+- Responses must be concise, direct, and optimized purely for Text-to-Speech output.
+- Use short, simple sentences. Avoid long, formal, textbook-style phrasing.
+- No markdown headers, no bullet symbols, no brackets. Plain speakable text only.
+- When answering in English, keep the same concise voice-friendly style.
 
 YOU HAVE REAL-TIME FULL ACCESS TO ALL ENTERPRISE DATASETS ACROSS VIANINFO SOLUTIONS:
 1. Employees & Employment Status: Employee directory, joining dates, department, designations, DOB/birthdays, tenure in months, and Probationary (< 6 months tenure) vs Permanent status.
@@ -72,7 +160,7 @@ ${JSON.stringify(fullContext, null, 2)}
 INSTRUCTIONS:
 1. Respond accurately to ANY user question regarding employees, probation/permanent status, salaries, attendance, work reports, leaves, support tickets, CRM deals, or birthdays.
 2. When answering in Malayalam, speak/write in natural, fluent Malayalam script (മലയാളം) with polite, clear phrasing.
-3. Highlight employee names, probation/permanent status badges, numbers, or key metrics using markdown bold.
+3. Summarize attendance/leave/CRM data into clean speakable text (e.g. "ഇന്ന് 8 പേരിൽ 7 Present ആണ്. സജിൽ Break-ലാണ്.").
 4. If asked about employment/probation status, use the employmentStatus and tenureMonths attributes or calculate from joinDate.
 5. If asked about IT helpdesk tickets, summarize active or resolved tickets, subjects, and assigned IT agents (such as Arun Kumar or Devika).
 6. Keep responses clear, direct, and concise, suitable for both visual display and natural voice playback.`;

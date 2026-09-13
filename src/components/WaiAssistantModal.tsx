@@ -10,13 +10,7 @@ import {
   CRMLead,
   SupportTicket,
 } from '../types';
-import {
-  isSpeechRecognitionSupported,
-  isSpeechSynthesisSupported,
-  speakText,
-  stopSpeech,
-  getLanguageCode,
-} from '../lib/speech';
+import { useWhisperSTT, playEleven } from '../lib/voicePipe';
 import { processLocalWAIQuery } from '../lib/waiCore';
 import {
   Mic,
@@ -78,10 +72,10 @@ export const WaiAssistantModal: React.FC<WaiAssistantModalProps> = ({
     },
   ]);
 
-  const recognitionRef = useRef<any>(null);
-  const silenceTimerRef = useRef<any>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const lastTranscriptRef = useRef<string>('');
+
+  const { start: startWhisper, stop: stopWhisper, listening: whisperListening, transcript: whisperTranscript } = useWhisperSTT();
 
   useEffect(() => {
     if (chatBottomRef.current) {
@@ -89,78 +83,29 @@ export const WaiAssistantModal: React.FC<WaiAssistantModalProps> = ({
     }
   }, [chatHistory, isLoading]);
 
-  // Handle Speech Recognition Toggle with Hands-Free Voice Activity Detection (VAD)
+  // Auto-submit once Whisper STT finishes transcribing
+  useEffect(() => {
+    if (!whisperListening && whisperTranscript && whisperTranscript !== lastTranscriptRef.current) {
+      lastTranscriptRef.current = whisperTranscript;
+      setInputText(whisperTranscript);
+      setIsListening(false);
+      handleSubmitQuery(whisperTranscript);
+    }
+  }, [whisperListening, whisperTranscript]);
+
+  // Handle Speech Recognition Toggle (Whisper STT via backend)
   const toggleListening = () => {
-    if (!isSpeechRecognitionSupported()) {
-      alert('Speech Recognition is not supported by your browser. You can type queries directly below!');
-      return;
-    }
-
     if (isListening) {
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      stopWhisper();
       setIsListening(false);
       return;
     }
-
-    try {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognitionRef.current = recognition;
-
-      recognition.lang = getLanguageCode(selectedLang);
-      recognition.continuous = true;
-      recognition.interimResults = true;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((result: any) => result[0])
-          .map((result) => result.transcript)
-          .join('');
-
-        setInputText(transcript);
-        lastTranscriptRef.current = transcript;
-
-        // VAD: Reset silence timer on every spoken result
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-
-        if (transcript.trim().length > 0) {
-          silenceTimerRef.current = setTimeout(() => {
-            // User finished speaking! Automatically submit audio hands-free
-            if (recognitionRef.current) {
-              try {
-                recognitionRef.current.stop();
-              } catch (e) {}
-            }
-            setIsListening(false);
-            handleSubmitQuery(transcript);
-          }, 1100); // 1.1s silence detection threshold
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error !== 'no-speech') {
-          setIsListening(false);
-        }
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognition.start();
-    } catch (e) {
-      console.error('Failed to start speech recognition:', e);
-      setIsListening(false);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert('Microphone access is not supported by your browser. You can type queries directly below!');
+      return;
     }
+    setIsListening(true);
+    startWhisper();
   };
 
   // Submit Query to WAI
@@ -238,13 +183,9 @@ export const WaiAssistantModal: React.FC<WaiAssistantModalProps> = ({
         },
       ]);
 
-      // Speak response using Web Speech Synthesis
-      speakText(
-        responseText,
-        respLang,
-        () => setIsSpeaking(true),
-        () => setIsSpeaking(false)
-      );
+      // Speak response using ElevenLabs TTS
+      setIsSpeaking(true);
+      playEleven(responseText, respLang === 'ml' ? 'ml' : 'en').finally(() => setIsSpeaking(false));
     } catch (error) {
       console.error('Error in WAI query processing:', error);
       setChatHistory((prev) => [
@@ -261,17 +202,7 @@ export const WaiAssistantModal: React.FC<WaiAssistantModalProps> = ({
   };
 
   const handleSpeak = (text: string, lang: WAILanguage = 'en') => {
-    if (isSpeaking) {
-      stopSpeech();
-      setIsSpeaking(false);
-    } else {
-      speakText(
-        text,
-        lang,
-        () => setIsSpeaking(true),
-        () => setIsSpeaking(false)
-      );
-    }
+    playEleven(text, lang === 'ml' ? 'ml' : 'en');
   };
 
   if (!isOpen) return null;
