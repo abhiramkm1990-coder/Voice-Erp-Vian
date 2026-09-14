@@ -83,6 +83,8 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
+  const [openAiApiKey, setOpenAiApiKey] = useState('');
   const [autoOpenPayslipPdf, setAutoOpenPayslipPdf] = useState(false);
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -100,15 +102,32 @@ export default function App() {
     setAutoOpenPayslipPdf(true);
   };
 
-  // Load Gemini key if stored
+  // Load API keys if stored
   useEffect(() => {
-    const storedKey = localStorage.getItem('GEMINI_API_KEY');
-    if (storedKey) setGeminiApiKey(storedKey);
+    const storedGemini = localStorage.getItem('GEMINI_API_KEY');
+    if (storedGemini) setGeminiApiKey(storedGemini);
+    const storedEleven = localStorage.getItem('ELEVENLABS_API_KEY');
+    if (storedEleven) setElevenLabsApiKey(storedEleven);
+    const storedOpenAi = localStorage.getItem('OPENAI_API_KEY');
+    if (storedOpenAi) setOpenAiApiKey(storedOpenAi);
   }, []);
 
   const handleSaveGeminiApiKey = (key: string) => {
     setGeminiApiKey(key);
-    localStorage.setItem('GEMINI_API_KEY', key);
+    if (key) localStorage.setItem('GEMINI_API_KEY', key);
+    else localStorage.removeItem('GEMINI_API_KEY');
+  };
+
+  const handleSaveElevenLabsApiKey = (key: string) => {
+    setElevenLabsApiKey(key);
+    if (key) localStorage.setItem('ELEVENLABS_API_KEY', key);
+    else localStorage.removeItem('ELEVENLABS_API_KEY');
+  };
+
+  const handleSaveOpenAiApiKey = (key: string) => {
+    setOpenAiApiKey(key);
+    if (key) localStorage.setItem('OPENAI_API_KEY', key);
+    else localStorage.removeItem('OPENAI_API_KEY');
   };
 
   // Switch Current User Profile
@@ -681,6 +700,10 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         geminiApiKey={geminiApiKey}
         onSaveGeminiApiKey={handleSaveGeminiApiKey}
+        elevenLabsApiKey={elevenLabsApiKey}
+        onSaveElevenLabsApiKey={handleSaveElevenLabsApiKey}
+        openAiApiKey={openAiApiKey}
+        onSaveOpenAiApiKey={handleSaveOpenAiApiKey}
       />
 
       {/* Notifications Drawer */}

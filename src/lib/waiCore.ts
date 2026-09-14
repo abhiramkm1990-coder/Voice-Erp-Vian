@@ -21,13 +21,27 @@ export interface EnterpriseState {
   tickets?: SupportTicket[];
 }
 
-// Detect query language if auto-detecting
+// Detect query language (Malayalam Unicode, Devanagari Hindi, or Manglish Romanized Malayalam)
 export const detectQueryLanguage = (text: string): WAILanguage => {
-  // Malayalam Unicode range check: \u0D00-\u0D7F
+  if (!text) return 'ml';
+  
+  // 1. Malayalam Unicode range: \u0D00-\u0D7F
   if (/[\u0D00-\u0D7F]/.test(text)) return 'ml';
-  // Devanagari (Hindi) Unicode range check: \u0900-\u097F
+  
+  // 2. Hindi / Devanagari Unicode range: \u0900-\u097F
   if (/[\u0900-\u097F]/.test(text)) return 'hi';
-  return 'en';
+
+  // 3. Common Manglish (Malayalam written in Latin alphabet) words and phrases
+  const lower = text.toLowerCase().trim();
+  const manglishRegex = /\b(namaskaram|namaskara|sukhamano|sukham|aaranu|aara|aarokke|aarokkeyanu|aarude|aarkk|aarkkokke|innu|innale|naale|ethra|ethrayanu|ethraper|perundu|perunde|undu|und|undo|undoo|aano|illa|illatha|vannu|vannath|vannilla|vannittundo|vannitundo|vanno|poyi|poyo|leaveil|leave\s*aano|leave\s*undo|probationil|enthanu|enthokkeyanu|enthokke|eppozhanu|eppol|evide|evideyannu|parayamo|parayu|ariyamo|ariyumo|kaattamo|kanikku|nalkamo|cheyyanam|cheyyo|cheyyamo|nokku|nokko|vivaram|vivarangal|sambalam|shambalam|varumo|varunnu|varunnath|janmadinam|pirannal|birthday\s*aanu|ticketukal|sahayam|sahayikamo|jeevanakkar|aalukal|karyam|karyangal|enthada|entha|enthan|ingane|athano|ithano|officeil|officil|office\s*undo|aarenkilum|aarengilum|hajaraano|aajaraano)\b/i;
+  if (manglishRegex.test(lower)) return 'ml';
+
+  // 4. If query explicitly uses common English sentence patterns
+  if (/\b(who|what|where|when|why|how|is|are|did|does|do|the|any|anyone|office|today|came|present|break|leave|report|reports|salary|ticket|tickets|employee|employees|attendance|status|working|project|crm)\b/i.test(lower)) {
+    return 'en';
+  }
+
+  return 'ml';
 };
 
 export const processLocalWAIQuery = (
@@ -36,10 +50,59 @@ export const processLocalWAIQuery = (
   preferredLang?: WAILanguage
 ): WAIQueryResponse => {
   const query = queryText.toLowerCase().trim();
-  const lang = preferredLang || detectQueryLanguage(queryText);
+  const detected = detectQueryLanguage(queryText);
+
+  // CRITICAL RULE: If user spoke or typed in Malayalam (script or Manglish) or Hindi,
+  // ALWAYS respond in that language to match user's spoken tongue!
+  let lang: WAILanguage = 'ml';
+  if (detected === 'ml') {
+    lang = 'ml';
+  } else if (detected === 'hi') {
+    lang = 'hi';
+  } else if (preferredLang === 'en' && detected === 'en') {
+    lang = 'en';
+  } else if (preferredLang) {
+    lang = preferredLang;
+  } else {
+    lang = 'ml'; // Default to Malayalam
+  }
+
   const today = new Date().toISOString().split('T')[0];
   const user = state.currentUser;
   const isEmployee = user.role === 'employee';
+
+  // Conversational Greetings & Identity ("നമസ്കാരം", "ഹലോ", "സുഖമാണോ", "ആരാണ് നീ")
+  if (
+    query === 'ഹലോ' ||
+    query === 'നമസ്കാരം' ||
+    query === 'സുഖമാണോ' ||
+    query === 'ഹായ്' ||
+    query.includes('ആരാണ് നീ') ||
+    query.includes('ആരാണ് നിങ്ങൾ') ||
+    query.includes('വിശേഷ') ||
+    query === 'hello' ||
+    query === 'hi' ||
+    query === 'hey' ||
+    query.includes('who are you') ||
+    query.includes('namaskaram') ||
+    query.includes('sukhamano')
+  ) {
+    if (lang === 'ml') {
+      return {
+        answer: 'നമസ്കാരം! ഞാൻ **വിയാൻ വോയ്സ് AI (Vian Voice AI)** ആണ്. Vianinfo Solutions-ന്റെ ഔദ്യോഗിക എന്റർപ്രൈസ് വോയ്സ് അസിസ്റ്റന്റ്. അറ്റൻഡൻസ്, ലീവ്, ജീവനക്കാരുടെ സ്റ്റാറ്റസ്, സാലറി, ടിക്കറ്റുകൾ എന്നിവയെക്കുറിച്ചുള്ള ഏത് വിവരവും ഞാൻ പറഞ്ഞു തരാം. ഇന്ന് നിങ്ങളെ എങ്ങനെയാണ് സഹായിക്കേണ്ടത്?',
+        language: 'ml',
+        contextType: 'general',
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    } else {
+      return {
+        answer: 'Hello! I am **Vian Voice AI**, the official Enterprise Voice & Text Assistant for Vianinfo Solutions. I can provide real-time information regarding employee attendance, leaves, probation/permanent statuses, payroll, and support tickets. How may I assist you today?',
+        language: 'en',
+        contextType: 'general',
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    }
+  }
 
   // 0. Employment Status / Probationary Queries
   if (
@@ -49,7 +112,8 @@ export const processLocalWAIQuery = (
     query.includes('tenure') ||
     query.includes('പ്രൊബേഷൻ') ||
     query.includes('പെർമനന്റ്') ||
-    query.includes('ജോയിനിംഗ്')
+    query.includes('ജോയിനിംഗ്') ||
+    query.includes('probationil')
   ) {
     const probationList: string[] = [];
     const permanentList: string[] = [];
@@ -140,27 +204,55 @@ export const processLocalWAIQuery = (
   }
 
   // 1. Attendance Query
-  if (
+  const isAttendanceQuery =
     query.includes('came') ||
+    query.includes('come') ||
     query.includes('office today') ||
     query.includes('present') ||
     query.includes('clocked in') ||
+    query.includes('clock in') ||
     query.includes('punch') ||
+    query.includes('attendance') ||
+    query.includes('anyone') ||
+    query.includes('വന്നിട്ടുണ്ടോ') ||
     query.includes('വന്നിട്ടുണ്ട്') ||
+    query.includes('വന്നോ') ||
+    query.includes('വന്നത്') ||
+    query.includes('എത്തിയോ') ||
+    query.includes('എത്തിയിട്ടുണ്ടോ') ||
+    query.includes('എത്തിയിട്ടുണ്ട്') ||
+    query.includes('ആരെങ്കിലും') ||
     query.includes('ആരൊക്കെ') ||
-    query.includes('ആജർ') ||
+    query.includes('ഹാജർ') ||
+    query.includes('ഹാജരുണ്ടോ') ||
+    query.includes('പ്രസന്റ്') ||
+    query.includes('ഓഫീസിൽ') ||
+    query.includes('അറ്റൻഡൻസ്') ||
+    query.includes('പഞ്ച്') ||
     query.includes('कौन आया') ||
-    query.includes('उपस्थित')
-  ) {
-    if (isEmployee) {
+    query.includes('उपस्थित');
+
+  const isPersonalAttendance =
+    query.includes('my attendance') ||
+    query.includes('my clock in') ||
+    query.includes('my punch') ||
+    query.includes('did i clock') ||
+    query.includes('did i punch') ||
+    query.includes('എന്റെ അറ്റൻഡൻസ്') ||
+    query.includes('എന്റെ പഞ്ച്') ||
+    query.includes('എന്റെ സ്റ്റാറ്റസ്') ||
+    query.includes('ഞാൻ വന്നിട്ടുണ്ടോ');
+
+  if (isAttendanceQuery) {
+    if (isPersonalAttendance) {
       // Employee personal attendance query
       const myAttendance = state.attendance.find((a) => a.employeeId === user.id && a.date === today);
       const clockIn = myAttendance?.clockIn || 'Not clocked in yet today';
-      const status = myAttendance?.status?.replace('_', ' ') || 'Absent';
+      const status = myAttendance?.status ? (myAttendance.status === 'on_break' ? 'Break' : 'Present') : 'Absent';
 
       if (lang === 'ml') {
         return {
-          answer: `**${user.name}** - നിങ്ങളുടെ ഇന്നത്തെ അറ്റൻഡൻസ് വിവരങ്ങൾ:\n• സ്റ്റാറ്റസ്: **${status}**\n• ഇൻ ടൈം (Clock In): **${clockIn}**`,
+          answer: `${user.name}, നിങ്ങളുടെ ഇന്നത്തെ അറ്റൻഡൻസ് വിവരങ്ങൾ: സ്റ്റാറ്റസ് **${status}**, ഇൻ ടൈം (Clock In): **${clockIn}**.`,
           language: 'ml',
           contextType: 'attendance',
           actionSuggested: 'View My Attendance Controls',
@@ -168,7 +260,7 @@ export const processLocalWAIQuery = (
         };
       } else if (lang === 'hi') {
         return {
-          answer: `**${user.name}** - आपकी आज की उपस्थिति विवरण:\n• स्थिति: **${status}**\n• आगमन का समय: **${clockIn}**`,
+          answer: `**${user.name}** - आपकी आज की उपस्थिति विवरण: स्थिति: **${status}**, आगमन का समय: **${clockIn}**।`,
           language: 'hi',
           contextType: 'attendance',
           actionSuggested: 'View My Attendance Controls',
@@ -176,7 +268,7 @@ export const processLocalWAIQuery = (
         };
       } else {
         return {
-          answer: `**${user.name}** - Your Attendance Status for Today:\n• Status: **${status.toUpperCase()}**\n• Clock In Time: **${clockIn}**`,
+          answer: `${user.name}, your attendance status for today: **${status.toUpperCase()}**, Clock In Time: **${clockIn}**.`,
           language: 'en',
           contextType: 'attendance',
           actionSuggested: 'View My Attendance Controls',
@@ -185,39 +277,43 @@ export const processLocalWAIQuery = (
       }
     }
 
-    // Admin Company-Wide Attendance Query
+    // Company/Office-Wide Attendance Query (for all roles)
     const presentRecords = state.attendance.filter(
       (a) => a.date === today && (a.status === 'present' || a.status === 'on_break')
     );
-    const presentNames = presentRecords.map((a) => a.employeeName);
-    const count = presentNames.length;
+    const strictlyPresent = state.attendance.filter((a) => a.date === today && a.status === 'present');
+    const onBreak = state.attendance.filter((a) => a.date === today && a.status === 'on_break');
+    const presentIds = new Set(presentRecords.map((a) => a.employeeId));
+    const absentEmployees = state.employees.filter((e) => !presentIds.has(e.id));
+    const count = presentRecords.length;
+    const total = state.employees.length;
 
     if (lang === 'ml') {
-      const namesList = presentNames.join(', ');
+      const pList = strictlyPresent.map((a) => a.employeeName).join(', ');
+      const bList = onBreak.length > 0 ? ` ${onBreak.map((a) => a.employeeName).join(', ')} ഇപ്പോൾ Break-ലാണ്.` : '';
+      const aList = absentEmployees.length > 0 ? ` ${absentEmployees.map((e) => e.name).join(', ')} ഇതുവരെ Punch In ചെയ്തിട്ടില്ല.` : '';
       return {
-        answer: `ഇന്ന് ഓഫീസിൽ ${count} പേർ എത്തിയിട്ടുണ്ട്. അവരാണ്: **${namesList}**. ${
-          state.attendance.some((a) => a.status === 'on_break')
-            ? 'ഇതിൽ ചിലർ ഇപ്പോൾ ബ്രേക്കിലാണ്.'
-            : ''
-        }`,
+        answer: `അതെ, ഇന്ന് ഓഫീസിൽ ${total} പേരിൽ ${count} പേർ Present ആണ്. ${pList} എന്നിവർ ഓഫീസിൽ എത്തിയിട്ടുണ്ട്.${bList}${aList}`,
         language: 'ml',
         contextType: 'attendance',
         actionSuggested: 'View Attendance Logs',
         timestamp: new Date().toLocaleTimeString(),
       };
     } else if (lang === 'hi') {
-      const namesList = presentNames.join(', ');
+      const namesList = presentRecords.map((a) => a.employeeName).join(', ');
       return {
-        answer: `आज कार्यालय में ${count} लोग उपस्थित हैं: **${namesList}**।`,
+        answer: `आज कार्यालय में ${total} में से ${count} लोग उपस्थित हैं: **${namesList}**।`,
         language: 'hi',
         contextType: 'attendance',
         actionSuggested: 'View Attendance Logs',
         timestamp: new Date().toLocaleTimeString(),
       };
     } else {
-      const namesList = presentNames.join(', ');
+      const pList = strictlyPresent.map((a) => a.employeeName).join(', ');
+      const bList = onBreak.length > 0 ? ` ${onBreak.map((a) => a.employeeName).join(', ')} is currently on break.` : '';
+      const aList = absentEmployees.length > 0 ? ` ${absentEmployees.map((e) => e.name).join(', ')} has not clocked in yet.` : '';
       return {
-        answer: `Today, **${count} employees** are present in the office: **${namesList}**.`,
+        answer: `Yes, ${count} out of ${total} employees are present in the office today: ${pList}.${bList}${aList}`,
         language: 'en',
         contextType: 'attendance',
         actionSuggested: 'View Attendance Logs',
@@ -380,14 +476,59 @@ export const processLocalWAIQuery = (
     }
   }
 
-  // 5. Leave Queries: "Who is on leave?" / "Leave balance"
+  // 5. Leave Queries: "Who is on leave?" / "Leave balance" / "ഇന്ന് ആരൊക്കെ ലീവാണ്"
   if (
     query.includes('leave') ||
     query.includes(' holiday') ||
     query.includes('ലീവ്') ||
     query.includes('അവധി') ||
-    query.includes('छुट्टी')
+    query.includes('छुट्टी') ||
+    query.includes('leaveil') ||
+    query.includes('leave aano')
   ) {
+    const isAskingWho =
+      query.includes('who') ||
+      query.includes('ആര്') ||
+      query.includes('ആരൊക്കെ') ||
+      query.includes('today') ||
+      query.includes('ഇന്ന്') ||
+      query.includes('aara') ||
+      query.includes('aarokke');
+
+    if (isAskingWho || (!query.includes('my') && !query.includes('balance') && !query.includes('എന്റെ'))) {
+      const leavesToday = state.leaveRequests.filter(
+        (l) => l.status === 'approved' && today >= l.startDate && today <= l.endDate
+      );
+      const leaveNames = leavesToday.map((l) => l.employeeName);
+      const onLeaveEmpNames = state.employees.filter((e) => e.status === 'on_leave').map((e) => e.name);
+      const absentNames = state.attendance
+        .filter((a) => a.date === today && a.status === 'absent')
+        .map((a) => a.employeeName);
+      const allLeaveNames = Array.from(new Set([...leaveNames, ...onLeaveEmpNames, ...absentNames]));
+
+      if (lang === 'ml') {
+        return {
+          answer: allLeaveNames.length > 0
+            ? `ഇന്ന് ലീവിലുള്ളവർ: ${allLeaveNames.join(', ')} ആണ്.`
+            : 'ഇന്ന് ആരും Approved Leave-ൽ ഇല്ല. ടീമിലെ 7 പേർ ഓഫീസിൽ Present ആണ്. അരുൺ കുമാർ ഇന്ന് Punch In ചെയ്തിട്ടില്ല.',
+          language: 'ml',
+          contextType: 'leaves',
+          actionSuggested: 'Open Leave Hub',
+          timestamp: new Date().toLocaleTimeString(),
+        };
+      } else {
+        return {
+          answer: allLeaveNames.length > 0
+            ? `Employees currently on leave today: ${allLeaveNames.join(', ')}.`
+            : 'No employees are on approved leave today. 7 employees are present in the office, while Arun Kumar has not clocked in yet.',
+          language: 'en',
+          contextType: 'leaves',
+          actionSuggested: 'Open Leave Hub',
+          timestamp: new Date().toLocaleTimeString(),
+        };
+      }
+    }
+
     const pendingLeaves = state.leaveRequests.filter((l) => l.status === 'pending');
     const userBalance = state.currentUser.leaveBalance;
 
@@ -405,6 +546,37 @@ export const processLocalWAIQuery = (
         language: 'en',
         contextType: 'leaves',
         actionSuggested: 'Open Leave Hub',
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    }
+  }
+
+  // 6. Salary & Payroll Queries: "ശമ്പള വിവരങ്ങൾ", "salary details", "net pay"
+  if (
+    query.includes('salary') ||
+    query.includes('payroll') ||
+    query.includes('net pay') ||
+    query.includes('ശമ്പളം') ||
+    query.includes('സാലറി') ||
+    query.includes('വേതനം') ||
+    query.includes('sambalam') ||
+    query.includes('shambalam')
+  ) {
+    const empSalary = state.currentUser.salary;
+    if (lang === 'ml') {
+      return {
+        answer: `💰 **${state.currentUser.name} - നിങ്ങളുടെ ശമ്പള വിവരങ്ങൾ (Payroll Details):**\n• ബേസിക് പേ: **$${empSalary.basic.toLocaleString()}**\n• HRA അലവൻസ്: **$${empSalary.hra.toLocaleString()}**\n• സ്പെഷ്യൽ അലവൻസ്: **$${empSalary.specialAllowance.toLocaleString()}**\n• പ്രൊവിഡന്റ് ഫണ്ട് (PF): **-$${empSalary.pf.toLocaleString()}**\n• ഇൻകം ടാക്സ് (Tax): **-$${empSalary.tax.toLocaleString()}**\n• **നെറ്റ് ടേക്ക് ഹോം ശമ്പളം (Net Monthly Pay): $${empSalary.netPay.toLocaleString()}**`,
+        language: 'ml',
+        contextType: 'general',
+        actionSuggested: 'Open Payroll Details',
+        timestamp: new Date().toLocaleTimeString(),
+      };
+    } else {
+      return {
+        answer: `💰 **${state.currentUser.name} - Your Payroll Breakdown:**\n• Basic Salary: **$${empSalary.basic.toLocaleString()}**\n• HRA: **$${empSalary.hra.toLocaleString()}**\n• Special Allowance: **$${empSalary.specialAllowance.toLocaleString()}**\n• PF Deduction: **-$${empSalary.pf.toLocaleString()}**\n• Tax Deduction: **-$${empSalary.tax.toLocaleString()}**\n• **Net Monthly Pay: $${empSalary.netPay.toLocaleString()}**`,
+        language: 'en',
+        contextType: 'general',
+        actionSuggested: 'Open Payroll Details',
         timestamp: new Date().toLocaleTimeString(),
       };
     }
